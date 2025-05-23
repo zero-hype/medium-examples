@@ -57,8 +57,8 @@ public class MessageRunner {
 
         generatedMessages = new ArrayList<>();
 
-        // Generate 2000 random messages
-        for (int x = 0; x < 2000; x++) {
+        // Generate 1000 random messages
+        for (int x = 0; x < 1000; x++) {
             generatedMessages.add(generateRandomAsciiString(BYTE_SIZE));
         }
 

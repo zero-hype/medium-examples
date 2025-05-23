@@ -55,7 +55,7 @@ public class ByteArrayKafkaProducerApp {
                 (data) -> kafkaPreBatcher.add(data + "|"),
                 1,
                 10,
-                100
+                10
         );
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
