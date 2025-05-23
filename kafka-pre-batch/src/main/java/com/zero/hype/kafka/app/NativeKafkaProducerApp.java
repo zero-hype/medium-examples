@@ -60,9 +60,9 @@ public class NativeKafkaProducerApp {
 
         new MessageRunner(
                 kafkaMessageStream::publish,
-                10,  // Number of producer threads
+                1,  // Number of producer threads
                 10,  // Messages per iteration
-                10   // Sleep time between iterations (ms)
+                100   // Sleep time between iterations (ms)
         );
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
