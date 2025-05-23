@@ -169,7 +169,7 @@ public class KafkaPreBatcher {
             originalSizeSummary.record(combined.length);
             compressionSizeSummary.record(compressedBytes.length);
 
-            double compressedPercentage = ((double) compressedBytes.length / combined.length) * 100;
+            double compressedPercentage = ((double) combined.length / compressedBytes.length) * 100;
             compressionSummary.record(compressedPercentage);
 
             return compressedBytes;
