@@ -1,0 +1,6 @@
+kafka:
+  clusters:
+    - name: local-cluster
+      bootstrapServers: kafka1:19092
+      properties:
+        security.protocol: PLAINTEXT
