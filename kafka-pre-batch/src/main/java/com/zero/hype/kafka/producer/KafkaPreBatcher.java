@@ -1,30 +1,41 @@
 package com.zero.hype.kafka.producer;
 
-import com.zero.hype.kafka.util.GzipCompressor;
-import com.zero.hype.kafka.util.OtelMeterRegistryManager;
-import io.micrometer.core.instrument.DistributionSummary;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import static com.zero.hype.kafka.util.KafkaConstants.*;
 
+import com.zero.hype.kafka.util.GzipCompressor;
+import com.zero.hype.kafka.util.KafkaConstants;
+import com.zero.hype.kafka.util.OtelMeterRegistryManager;
+import com.zero.hype.kafka.util.ZeroProperty;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.Timer;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * KafkaPreBatcher implements application-level batching for Kafka messages to optimize throughput
  * and reduce overhead. Instead of sending individual messages to Kafka, this class accumulates
  * messages into larger batches, compresses them, and sends them as a single Kafka message.
- *
+ * <p>
  * Key features:
  * - Thread-safe message accumulation using ArrayBlockingQueue
  * - GZIP compression of batched messages
  * - Asynchronous processing using CompletableFuture
  * - Configurable batch size
  * - Automatic batch shipping when size threshold is reached
- *
+ * - Comprehensive compression metrics:
+ * - Compression ratio per batch
+ * - Original and compressed sizes
+ * - Compression time
+ * - Batch success/failure rates
+ * - Message counts per batch
+ * <p>
  * Usage example:
  * <pre>
  * ByteArrayKafkaProducer producer = new ByteArrayKafkaProducer(manager, config);
@@ -35,7 +46,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *     }
  * });
  * </pre>
- *
+ * <p>
  * This class is not designed for production use as-is. It is a simplified example
  * to demonstrate the concept of pre-batching messages for Kafka.
  */
@@ -48,28 +59,43 @@ public class KafkaPreBatcher {
     private final ArrayBlockingQueue<String> queue;
     private final AtomicBoolean drainInProgress = new AtomicBoolean(false);
     private final ExecutorService executor;
-    private final DistributionSummary compressionSummary;
     private final DistributionSummary compressionSizeSummary;
-    private final DistributionSummary originalSizeSummary;
+    private final DistributionSummary messagesPerBatchSummary;
+    private final Timer compressionTimer;
+    private final Counter batchSuccessCounter;
+    private final Counter batchFailureCounter;
+    private final DistributionSummary compressionRatioSummary;
+    private final DistributionSummary batchSizeSummary;
 
-    private int batchSize;
+    private ZeroProperty<Integer> batchSizeRef;
 
     /**
      * Creates a new KafkaPreBatcher instance.
      *
      * @param meterRegistryManager The OpenTelemetry meter registry manager for metrics
-     * @param batchSize The number of messages to accumulate before sending to Kafka
-     * @param kafkaProducer The producer instance used to send batched messages
+     * @param batchSizeRef            The number of messages to accumulate before sending to Kafka
+     * @param kafkaProducer        The producer instance used to send batched messages
      */
-    public KafkaPreBatcher(OtelMeterRegistryManager meterRegistryManager, int batchSize, ByteArrayKafkaProducer kafkaProducer) {
+    public KafkaPreBatcher(
+            OtelMeterRegistryManager meterRegistryManager,
+            ZeroProperty<Integer> batchSizeRef,
+            ByteArrayKafkaProducer kafkaProducer) {
         this.kafkaProducer = kafkaProducer;
-        this.batchSize = batchSize;
-        // Queue capacity is set to 100x batch size to handle burst loads
-        this.queue = new ArrayBlockingQueue<>(batchSize * 100);
+        this.batchSizeRef = batchSizeRef;
+        // just set as a high value to allow runtime updates to batch size
+        this.queue = new ArrayBlockingQueue<>(100000);
         this.executor = Executors.newFixedThreadPool(10);
-        this.compressionSummary = meterRegistryManager.getDistributionSummary("kafka.prebatcher.compression", "type", "gzip");
-        this.originalSizeSummary = meterRegistryManager.getDistributionSummary("kafka.prebatcher.original.size", "type", "gzip");
-        this.compressionSizeSummary = meterRegistryManager.getDistributionSummary("kafka.prebatcher.original.size", "type", "gzip");
+        this.compressionSizeSummary =
+                meterRegistryManager.getDistributionSummary(METRIC_COMPRESSION_SIZE, TOPIC_LABEL, TOPIC_TEST_BYTES);
+        this.messagesPerBatchSummary =
+                meterRegistryManager.getDistributionSummary(METRIC_MESSAGES_PER_BATCH, TOPIC_LABEL, TOPIC_TEST_BYTES);
+        this.compressionTimer = meterRegistryManager.getTimer(METRIC_BATCH_TIME, TOPIC_LABEL, TOPIC_TEST_BYTES);
+        this.batchSuccessCounter = meterRegistryManager.getCounter(METRIC_BATCH_SUCCESS, TOPIC_LABEL, TOPIC_TEST_BYTES);
+        this.batchFailureCounter = meterRegistryManager.getCounter(METRIC_BATCH_FAILURE, TOPIC_LABEL, TOPIC_TEST_BYTES);
+        this.compressionRatioSummary = meterRegistryManager.getDistributionSummary(
+                KafkaConstants.METRIC_COMPRESSION_RATE, TOPIC_LABEL, TOPIC_TEST_BYTES);
+        this.batchSizeSummary = meterRegistryManager.getDistributionSummary(
+                KafkaConstants.METRIC_BATCH_SIZE, TOPIC_LABEL, TOPIC_TEST_BYTES);
     }
 
     /**
@@ -78,7 +104,7 @@ public class KafkaPreBatcher {
      *
      * @param message The message to add to the batch
      * @return A CompletableFuture that completes with true if the message was added
-     *         successfully, false otherwise
+     * successfully, false otherwise
      */
     public CompletableFuture<Boolean> add(String message) {
         CompletableFuture<Boolean> future = new CompletableFuture<>();
@@ -88,6 +114,7 @@ public class KafkaPreBatcher {
                 // Try to add the message to the queue with a 1-second timeout
                 boolean offered = queue.offer(message, 1, TimeUnit.SECONDS);
                 future.complete(offered);
+                int batchSize = this.batchSizeRef.getValue();
 
                 // If message was added, and we've reached batch size, try to ship the batch
                 if (offered && queue.size() >= batchSize && drainInProgress.compareAndSet(false, true)) {
@@ -117,15 +144,39 @@ public class KafkaPreBatcher {
      */
     private void shipIt(List<String> batch) {
         try {
-            byte[] bytes = serialize(batch);
-            kafkaProducer.publish(bytes)
-                .orTimeout(5, TimeUnit.SECONDS)
-                .exceptionally(ex -> {
-                    logger.error("Failed to publish batch: " + ex.getMessage(), ex);
-                    return false;
-                });
-        } catch (IOException e) {
-            logger.error(e.getMessage());
+            // Record batch size metrics
+            messagesPerBatchSummary.record(batch.size());
+            batchSizeSummary.record(batch.stream().mapToInt(String::length).sum());
+
+            // Time the compression operation
+            byte[] bytes = compressionTimer.record(() -> {
+                try {
+                    return serialize(batch);
+                } catch (IOException e) {
+                    logger.error("Compression failed: " + e.getMessage(), e);
+                    batchFailureCounter.increment();
+                    throw new RuntimeException(e);
+                }
+            });
+
+            kafkaProducer
+                    .publish(bytes)
+                    .orTimeout(5, TimeUnit.SECONDS)
+                    .thenAccept(success -> {
+                        if (success) {
+                            batchSuccessCounter.increment();
+                        } else {
+                            batchFailureCounter.increment();
+                        }
+                    })
+                    .exceptionally(ex -> {
+                        logger.error("Failed to publish batch: " + ex.getMessage(), ex);
+                        batchFailureCounter.increment();
+                        return null;
+                    });
+        } catch (Exception e) {
+            logger.error("Batch processing failed: " + e.getMessage(), e);
+            batchFailureCounter.increment();
         }
     }
 
@@ -164,13 +215,14 @@ public class KafkaPreBatcher {
                 offset += msgBytes.length;
             }
 
-            byte[] compressedBytes =  compressor.compress(combined);
+            byte[] compressedBytes = compressor.compress(combined);
 
-            originalSizeSummary.record(combined.length);
+            // Record original and compressed sizes
             compressionSizeSummary.record(compressedBytes.length);
 
-            double compressedPercentage = ((double) combined.length / compressedBytes.length) * 100;
-            compressionSummary.record(compressedPercentage);
+            // Calculate and record compression metrics
+            double compressionRatio = (double) compressedBytes.length / combined.length;
+            compressionRatioSummary.record(compressionRatio);
 
             return compressedBytes;
         } catch (Exception e) {

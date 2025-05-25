@@ -43,7 +43,8 @@ public class GzipCompressor {
                 }
                 return baos.toByteArray();
             } catch (IOException ioException) {
-                throw new IOException(String.format("Error compressing data [%s]", ioException.getMessage()), ioException);
+                throw new IOException(
+                        String.format("Error compressing data [%s]", ioException.getMessage()), ioException);
             }
         }
         return data;
@@ -61,8 +62,8 @@ public class GzipCompressor {
     public byte[] decompress(byte[] data) throws IOException {
         if (data != null && data.length > 0 && isCompressed(data)) {
             try (ByteArrayInputStream bais = new ByteArrayInputStream(data);
-                 GZIPInputStream gzis = new GZIPInputStream(bais);
-                 ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+                    GZIPInputStream gzis = new GZIPInputStream(bais);
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
                 byte[] buffer = new byte[4096];
                 int len;
                 while ((len = gzis.read(buffer)) > 0) {
@@ -84,7 +85,7 @@ public class GzipCompressor {
      * @return true if the data appears to be GZIP-compressed, false otherwise
      */
     public boolean isCompressed(byte[] data) {
-        return (data[0] == (byte) (GZIPInputStream.GZIP_MAGIC)) && 
-               (data[1] == (byte) (GZIPInputStream.GZIP_MAGIC >> 8));
+        return (data[0] == (byte) (GZIPInputStream.GZIP_MAGIC))
+                && (data[1] == (byte) (GZIPInputStream.GZIP_MAGIC >> 8));
     }
 }
