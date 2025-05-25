@@ -1,12 +1,17 @@
 package com.zero.hype.kafka.producer;
 
+import static com.zero.hype.kafka.util.KafkaConstants.TOPIC_LABEL;
+import static com.zero.hype.kafka.util.KafkaConstants.TOPIC_TEST_BYTES;
+
 import com.zero.hype.kafka.util.OtelMeterRegistryManager;
 import io.micrometer.core.instrument.Counter;
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerRecord;
-
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * ByteArrayKafkaProducer is a specialized Kafka producer that handles sending pre-batched,
@@ -34,6 +39,8 @@ import java.util.concurrent.CompletableFuture;
  */
 public class ByteArrayKafkaProducer {
 
+    private static final Logger logger = LoggerFactory.getLogger(ByteArrayKafkaProducer.class);
+    private static final AtomicBoolean shutdown = new AtomicBoolean(false);
     private final KafkaProducer<String, byte[]> producer;
     private final Counter counter;
 
@@ -46,7 +53,7 @@ public class ByteArrayKafkaProducer {
      */
     public ByteArrayKafkaProducer(OtelMeterRegistryManager meterRegistryManager, Map<String, Object> additionalConfig) {
         producer = new KafkaProducer<>(additionalConfig);
-        this.counter = meterRegistryManager.getCounter("kafka.producer.send", "topic", "test-bytes");
+        this.counter = meterRegistryManager.getCounter("kafka.producer.send", TOPIC_LABEL, TOPIC_TEST_BYTES);
     }
 
     /**
@@ -58,23 +65,35 @@ public class ByteArrayKafkaProducer {
      *         successfully, or completes exceptionally if an error occurs
      */
     public CompletableFuture<Boolean> publish(byte[] bytes) {
-        ProducerRecord<String, byte[]> kafkaRecord =
-                new ProducerRecord<>(
-                        "test-bytes",
-                        bytes
-                );
+        if (!shutdown.get()) {
+            ProducerRecord<String, byte[]> kafkaRecord = new ProducerRecord<>(TOPIC_TEST_BYTES, bytes);
 
-        CompletableFuture<Boolean> future = new CompletableFuture<>();
+            CompletableFuture<Boolean> future = new CompletableFuture<>();
+            producer.send(kafkaRecord, (metadata, exception) -> {
+                if (exception != null) {
+                    future.completeExceptionally(exception);
+                } else {
+                    counter.increment();
+                    future.complete(Boolean.TRUE);
+                }
+            });
+            return future;
+        } else {
+            return CompletableFuture.completedFuture(Boolean.FALSE);
+        }
+    }
 
-        producer.send(kafkaRecord, (metadata, exception) -> {
-            if (exception != null) {
-                future.completeExceptionally(exception);
-            } else {
-                this.counter.increment();
-                future.complete(Boolean.TRUE);
-            }
-        });
-
-        return future;
+    /**
+     * Closes the producer, releasing any resources held by it.
+     * This method should be called when the producer is no longer needed.
+     */
+    public void close() {
+        try {
+            producer.flush();
+            producer.close();
+            logger.info("{} producer closed", getClass().getSimpleName());
+        } catch (Exception e) {
+            logger.error("Error closing Kafka producer {}", e.getMessage(), e);
+        }
     }
 }

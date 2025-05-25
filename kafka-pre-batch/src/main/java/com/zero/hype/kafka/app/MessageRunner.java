@@ -1,13 +1,19 @@
 package com.zero.hype.kafka.app;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import static com.zero.hype.kafka.util.KafkaConstants.TOPIC_LABEL;
 
+import com.zero.hype.kafka.util.OtelMeterRegistryManager;
+import com.zero.hype.kafka.util.ZeroProperty;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Timer;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.LongAdder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * MessageRunner is a utility class that generates and sends messages at a configurable rate.
@@ -34,13 +40,16 @@ import java.util.concurrent.atomic.LongAdder;
  */
 public class MessageRunner {
 
+    private static final List<Thread> threads = Collections.synchronizedList(new ArrayList<>());
     private static final Logger logger = LoggerFactory.getLogger(MessageRunner.class);
-    private static final int BYTE_SIZE = 1024;
+    private static final int BYTE_SIZE = 100;
     private static final String CHARSET = " -_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     private final MessageAdder messageAdder;
-    private final int messageCountPerIteration;
-    private final int threadSleep;
+    private final ZeroProperty<Integer> messageCountPerIteration;
+    private final ZeroProperty<Integer> threadSleep;
     private final List<String> generatedMessages;
+    private final OtelMeterRegistryManager meterRegistryManager;
+    private final String topic;
 
     /**
      * Creates a new MessageRunner instance.
@@ -50,7 +59,15 @@ public class MessageRunner {
      * @param messageCountPerIteration Number of messages to send in each iteration
      * @param threadSleep Sleep time between iterations in milliseconds
      */
-    public MessageRunner(MessageAdder messageAdder, int threadCount, int messageCountPerIteration, int threadSleep) {
+    public MessageRunner(
+            String topic,
+            OtelMeterRegistryManager meterRegistryManager,
+            MessageAdder messageAdder,
+            ZeroProperty<Integer> threadCount,
+            ZeroProperty<Integer> messageCountPerIteration,
+            ZeroProperty<Integer> threadSleep) {
+        this.topic = topic;
+        this.meterRegistryManager = meterRegistryManager;
         this.messageAdder = messageAdder;
         this.messageCountPerIteration = messageCountPerIteration;
         this.threadSleep = threadSleep;
@@ -63,9 +80,47 @@ public class MessageRunner {
         }
 
         // Start the threads
-        for (int x = 0; x < threadCount; x++) {
-            startThread(x + 1);
+        for (int x = 0; x < threadCount.getValue(); x++) {
+            threads.add(startThread(x + 1));
         }
+        Executors.newSingleThreadScheduledExecutor()
+                .scheduleAtFixedRate(
+                        () -> {
+                            int threadsWantedCount = threadCount.getValue();
+                            if (threadsWantedCount < 1) {
+                                logger.warn("Thread count is set to zero or negative, no threads will be managed.");
+                                return;
+                            }
+
+                            if (threadsWantedCount == threads.size()) {
+                                logger.debug(
+                                        "Current thread count: {}, as expected: {}",
+                                        threads.size(),
+                                        threadCount.getValue());
+                            } else if (threadCount.getValue() > threads.size()) {
+                                int threadsToStart = threadCount.getValue() - threads.size();
+                                for (int x = 0; x < threadsToStart; x++) {
+                                    Thread thread = startThread(threads.size() + 1);
+                                    threads.add(thread);
+                                    logger.debug("Started new thread: {}", thread.getName());
+                                }
+                            } else if (threadCount.getValue() < threads.size()) {
+                                int threadsToStop = threads.size() - threadCount.getValue();
+                                for (int x = 0; x < threadsToStop; x++) {
+                                    Thread thread = threads.remove(threads.size() - 1);
+                                    thread.interrupt();
+                                    try {
+                                        thread.join();
+                                    } catch (InterruptedException e) {
+                                        logger.error("Error stopping thread: {}", thread.getName(), e);
+                                    }
+                                    logger.debug("Stopped thread: {}", thread.getName());
+                                }
+                            }
+                        },
+                        0,
+                        10,
+                        TimeUnit.SECONDS);
     }
 
     /**
@@ -74,35 +129,57 @@ public class MessageRunner {
      *
      * @param threadId The ID of the thread to start
      */
-    private void startThread(int threadId) {
+    private Thread startThread(int threadId) {
         Thread thread = new Thread(() -> {
+            Counter messageCounter = meterRegistryManager.getCounter(
+                    "kafka.producer.message.runner.send", "thread", "MessageRunner-" + threadId, TOPIC_LABEL, topic);
+            Counter messageFailure = meterRegistryManager.getCounter(
+                    "kafka.producer.message.runner.send.fail",
+                    "thread",
+                    "MessageRunner-" + threadId,
+                    TOPIC_LABEL,
+                    topic);
+            Timer sleepTimer = meterRegistryManager.getTimer(
+                    "kafka.producer.message.runner.sleep.time",
+                    "thread",
+                    "MessageRunner-" + threadId,
+                    TOPIC_LABEL,
+                    topic);
             ThreadLocalRandom random = ThreadLocalRandom.current();
-            LongAdder counter = new LongAdder();
-            while (true) {
-                counter.increment();
-                for (int x = 0; x < messageCountPerIteration; x++) {
-                    messageAdder.addMessage(
-                                    generatedMessages.get(random.nextInt(generatedMessages.size()))
-                            ).orTimeout(5000, TimeUnit.MILLISECONDS)
+            boolean running = true;
+
+            while (running) {
+                for (int x = 0; x < messageCountPerIteration.getValue(); x++) {
+                    messageCounter.increment();
+                    messageAdder
+                            .addMessage(generatedMessages.get(random.nextInt(generatedMessages.size())))
+                            .orTimeout(5000, TimeUnit.MILLISECONDS)
                             .thenAccept(result -> {
                                 if (!result) {
                                     logger.error("Error adding message");
                                 }
                             })
                             .exceptionally(ex -> {
+                                messageFailure.increment();
                                 logger.error("Failed to publish message: " + ex.getMessage());
                                 return null;
                             });
                 }
                 try {
-                    Thread.sleep(threadSleep);
+                    long startTime = System.currentTimeMillis();
+                    Thread.sleep(threadSleep.getValue());
+                    sleepTimer.record(System.currentTimeMillis() - startTime, TimeUnit.MILLISECONDS);
                 } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
+                    running = false;
+                    logger.info(
+                            "Thread {} interrupted, stopping...",
+                            Thread.currentThread().getName());
                 }
             }
         });
         thread.setName("MessageRunner-" + threadId);
         thread.start();
+        return thread;
     }
 
     /**

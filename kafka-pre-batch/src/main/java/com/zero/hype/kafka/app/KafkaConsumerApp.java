@@ -3,20 +3,19 @@ package com.zero.hype.kafka.app;
 import com.zero.hype.kafka.consumer.ByteArrayMessageStreamConsumer;
 import com.zero.hype.kafka.consumer.StringMessageStreamConsumer;
 import com.zero.hype.kafka.util.OtelMeterRegistryManager;
-
 import java.util.Map;
 
 /**
  * KafkaConsumerApp serves as the main entry point for the Kafka consumer demonstration,
  * showcasing both pre-batched and native message consumption patterns.
- * 
+ *
  * This application starts two different types of consumers:
  * 1. ByteArrayMessageStreamConsumer - Handles pre-batched messages from the 'test-bytes' topic
  *    that were compressed and batched at the application level
  * 2. StringMessageStreamConsumer - Processes individual messages from the 'test' topic
  *    that were sent using native Kafka batching
  *
- * The application uses OpenTelemetry for metrics collection, allowing comparison of 
+ * The application uses OpenTelemetry for metrics collection, allowing comparison of
  * performance between the two approaches.
  *
  * Usage:

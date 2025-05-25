@@ -1,15 +1,11 @@
 package com.zero.hype.kafka.consumer;
 
+import static com.zero.hype.kafka.util.KafkaConstants.TOPIC_LABEL;
+
 import com.zero.hype.kafka.util.GzipCompressor;
 import com.zero.hype.kafka.util.OtelMeterRegistryManager;
 import com.zero.hype.kafka.util.RandomUtils;
 import io.micrometer.core.instrument.Counter;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -17,7 +13,17 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+/**
+ * Consumes byte array messages from a Kafka topic, decompresses them if they are GZIP compressed,
+ * and logs the messages. This consumer is designed to handle messages produced by
+ * {@link com.zero.hype.kafka.producer.KafkaPreBatcher}.
+ */
 public class ByteArrayMessageStreamConsumer {
 
     private static final Logger logger = LoggerFactory.getLogger(ByteArrayMessageStreamConsumer.class);
@@ -25,6 +31,13 @@ public class ByteArrayMessageStreamConsumer {
 
     private final String topic;
 
+    /**
+     * Constructs a new ByteArrayMessageStreamConsumer and starts a new thread to poll for messages.
+     *
+     * @param manager The OpenTelemetry meter registry manager for metrics.
+     * @param additionalConfig A map of additional Kafka consumer configurations.
+     *                         It must include the "topic" to consume from.
+     */
     public ByteArrayMessageStreamConsumer(OtelMeterRegistryManager manager, Map<String, String> additionalConfig) {
         GzipCompressor gzipCompressor = new GzipCompressor();
         this.topic = additionalConfig.get("topic");
@@ -41,13 +54,12 @@ public class ByteArrayMessageStreamConsumer {
         consumer.subscribe(List.of(topic));
         logger.debug("Subscribed to topic {}", topic);
 
-        Counter recordCounter = manager.getCounter("kafka.consumer.record", "topic", topic);
-        Counter eventCounter = manager.getCounter("kafka.consumer.event", "topic", topic);
+        Counter recordCounter = manager.getCounter("kafka.consumer.record", TOPIC_LABEL, topic);
+        Counter eventCounter = manager.getCounter("kafka.consumer.event", TOPIC_LABEL, topic);
 
         Thread t = new Thread(() -> {
             while (true) {
-                ConsumerRecords<String, byte[]> records =
-                        consumer.poll(Duration.ofMillis(100));
+                ConsumerRecords<String, byte[]> records = consumer.poll(Duration.ofMillis(100));
 
                 for (ConsumerRecord<String, byte[]> kafkaRecord : records) {
                     recordCounter.increment();
@@ -63,13 +75,12 @@ public class ByteArrayMessageStreamConsumer {
                             continue;
                         }
                     }
-                    if (RandomUtils.chance(0.1)) {
+                    if (logger.isDebugEnabled() && RandomUtils.chance(0.1)) {
                         logger.debug("Processing topic=" + topic + " "
                                 + "key=" + kafkaRecord.key()
                                 + ",partition=" + kafkaRecord.partition()
                                 + ",offset=" + kafkaRecord.offset()
-                                + ",value=" + strValue
-                        );
+                                + ",value=" + strValue);
                     }
                 }
 

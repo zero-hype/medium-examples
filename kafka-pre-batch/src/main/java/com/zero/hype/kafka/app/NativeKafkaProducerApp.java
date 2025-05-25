@@ -1,9 +1,11 @@
 package com.zero.hype.kafka.app;
 
+import static com.zero.hype.kafka.util.KafkaConstants.TOPIC_TEST;
+
 import com.zero.hype.kafka.producer.NativeKafkaProducer;
 import com.zero.hype.kafka.util.KafkaConstants;
 import com.zero.hype.kafka.util.OtelMeterRegistryManager;
-
+import com.zero.hype.kafka.util.ZeroProperties;
 import java.util.Map;
 
 /**
@@ -46,27 +48,32 @@ public class NativeKafkaProducerApp {
     public static void main(String[] args) {
         OtelMeterRegistryManager manager = new OtelMeterRegistryManager();
 
-        NativeKafkaProducer kafkaMessageStream = new NativeKafkaProducer(
+        NativeKafkaProducer nativeKafkaProducer = new NativeKafkaProducer(
                 manager,
                 Map.of(
                         KafkaConstants.CONFIG_BOOTSTRAP_SERVERS, "localhost:9092",
                         KafkaConstants.CONFIG_KEY_SERIALIZER, "org.apache.kafka.common.serialization.StringSerializer",
-                        KafkaConstants.CONFIG_VALUE_SERIALIZER, "org.apache.kafka.common.serialization.StringSerializer",
+                        KafkaConstants.CONFIG_VALUE_SERIALIZER,
+                                "org.apache.kafka.common.serialization.StringSerializer",
                         KafkaConstants.CONFIG_ACKS, "1",
+                        KafkaConstants.CONFIG_LINGER_MS, "5000", // 5 seconds linger time
                         KafkaConstants.CONFIG_COMPRESSION_TYPE, "gzip",
-                        KafkaConstants.CONFIG_BATCH_SIZE, "32768"
-                )
-        );
+                        KafkaConstants.CONFIG_BATCH_SIZE, "512000")); // 512KB batch size
 
         new MessageRunner(
-                kafkaMessageStream::publish,
-                1,  // Number of producer threads
-                10,  // Messages per iteration
-                100   // Sleep time between iterations (ms)
-        );
+                TOPIC_TEST,
+                manager,
+                nativeKafkaProducer::publish,
+                // Number of producer threads
+                ZeroProperties.getInteger(ZeroProperties.NATIVE_APP_THREAD_COUNT, 1),
+                // Messages per iteration
+                ZeroProperties.getInteger(ZeroProperties.NATIVE_APP_MESSAGE_PER_ITERATION, 10),
+                // Sleep time between iterations (ms)
+                ZeroProperties.getInteger(ZeroProperties.NATIVE_APP_SLEEP_TIME, 10));
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             manager.stop();
+            nativeKafkaProducer.close();
         }));
     }
 }
