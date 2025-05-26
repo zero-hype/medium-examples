@@ -1,6 +1,12 @@
 # Kafka Pre-Batching Example
+Welcome to the Kafka Pre-Batching Example! Kafka is a powerful distributed streaming platform, and this project showcases an innovative way to 
+optimize message handling by implementing application-level pre-batching. The POC approach is in no way a production-ready solution, 
+but rather a demonstration of how to efficiently manage message throughput and network efficiency in Kafka applications. A launch pad for further
+exploration and experimentation. From this starting point you can build more complex and robust solutions tailored to your specific use cases and
+see how pre-batching can enhance your Kafka-based applications in realtime with updatable properties and dynamic batching strategies.
 
-This project demonstrates an alternative approach to Kafka message batching by implementing application-level pre-batching before sending messages to Kafka. This example compares two different batching strategies:
+Project demonstrates an alternative approach to Kafka message batching by implementing application-level pre-batching before sending messages to Kafka. 
+This example compares two different batching strategies:
 
 1. **Application-Level Pre-Batching** (Custom Implementation)
    - Messages are collected and batched at the application level
@@ -98,6 +104,7 @@ kafkaProducer.publish(bytes);     // Sends to Kafka
    ```
 
 ## Monitoring
+![Podman Containers](assets/images/podman-containers.png "Podman Containers Screenshot")
 
 The application includes a complete monitoring stack:
 - OpenTelemetry for metrics collection
@@ -112,9 +119,10 @@ Key metrics available:
 - Error rates
 
 Access the monitoring tools:
-- Grafana: http://localhost:3000 (admin/admin)
+- Grafana: http://localhost:3000 (admin/admin) ![Kafka Dashboard](assets/images/kafka-dashboard1.png "Kafka Dashboard Screenshot")
 - Prometheus: http://localhost:9999
-- Kafka UI: http://localhost:9000
+- Kafka UI: http://localhost:9000 ![Kafka UI](assets/images/kafka-ui.png "Kafka UI Screenshot")
+
 
 ## Performance Considerations
 
@@ -161,10 +169,34 @@ Map.of(
   - Latency requirements
   - Throughput needs
 
+### Dynamic Property Updates (zero.properties)
+
+The application utilizes a `zero.properties` file for managing certain operational parameters, such as thread counts, messages per iteration, sleep times, and batch sizes. These properties are dynamically reloaded every 10 seconds, allowing for runtime adjustments to message rates and algorithm behavior.
+
+**Example `zero.properties`:**
+```properties
+# Byte Array App (Pre-batching) Settings
+byte.app.thread.count=1
+byte.app.message.per.iteration=100
+byte.app.sleep.time=10
+byte.app.batch.size=100
+
+# Native Kafka App Settings
+native.app.thread.count=1
+native.app.message.per.iteration=100
+native.app.sleep.time=10
+```
+
+**Important Considerations:**
+-   **Running from IDE:** When you run the application directly (e.g., its `main` method from your IDE), changes to the `src/main/resources/zero.properties` file will be picked up dynamically at runtime after a short delay (up to 10 seconds). This is because the application will load it as a classpath resource if no external path is specified.
+-   **Running from JAR:** When the application is packaged into a JAR file, you have two options for `zero.properties`:
+    1.  **Bundled (Default):** If no external path is specified, the `zero.properties` file bundled within the JAR at build time will be used. Changes to this bundled file *after* the JAR is built will **not** be reflected at runtime due to classloader caching.
+    2.  **Externalized (Recommended for JARs):** To allow dynamic updates or configuration changes without rebuilding the JAR, you can place the `zero.properties` file outside your JAR and specify its location using the system property `zero.properties.path` when running the application. For example:
+        ```bash
+        java -Dzero.properties.path=/path/to/your/zero.properties -jar target/kafka-pre-batch-1.0-SNAPSHOT.jar
+        ```
+        In this mode, the application will periodically re-load the properties from the specified external file. If the external file is not found at startup or during a reload attempt, the application will log a warning and attempt to use/retain the last known valid properties (or fall back to classpath if it's the first load attempt and external fails).
+
 ## Contributing
 
 Feel free to submit issues and enhancement requests!
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
