@@ -91,17 +91,42 @@ kafkaProducer.publish(bytes);     // Sends to Kafka
    mvn clean package
    ```
 
-4. **Run the Example**
-   ```bash
-   # Terminal 1: Start the consumer
-   java -cp target/kafka-pre-batch-1.0-SNAPSHOT.jar com.zero.hype.kafka.app.KafkaConsumerApp
+4. **Import Dashboard**
+   Open Grafana at [http://localhost:3000](http://localhost:3000) username:admin and password: admin, import the dashboard from `kafka-pre-batch/assets/dashboards/kafka-pre-batch.json`.
 
-   # Terminal 2: Run the pre-batching producer
-   java -cp target/kafka-pre-batch-1.0-SNAPSHOT.jar com.zero.hype.kafka.app.ByteArrayKafkaProducerApp
+### Run the Applications
 
-   # Terminal 3: Run the native batching producer (for comparison)
-   java -cp target/kafka-pre-batch-1.0-SNAPSHOT.jar com.zero.hype.kafka.app.NativeKafkaProducerApp
-   ```
+You can run the applications in three separate terminals:
+
+**Terminal 1: Start the consumer**
+```bash
+cd kafka-pre-batch
+mvn exec:java -Dexec.mainClass="com.zero.hype.kafka.app.KafkaConsumerApp"
+```
+
+**Terminal 2: Run the pre-batching producer**
+```bash
+cd kafka-pre-batch
+mvn exec:java -Dexec.mainClass="com.zero.hype.kafka.app.ByteArrayKafkaProducerApp"
+```
+
+**Terminal 3: Run the native batching producer (for comparison)**
+```bash
+cd kafka-pre-batch
+mvn exec:java -Dexec.mainClass="com.zero.hype.kafka.app.NativeKafkaProducerApp"
+```
+
+Alternatively, you can run the JAR directly:
+```bash
+# Terminal 1: Start the consumer
+java -cp target/kafka-pre-batch-1.0-SNAPSHOT.jar com.zero.hype.kafka.app.KafkaConsumerApp
+
+# Terminal 2: Run the pre-batching producer
+java -cp target/kafka-pre-batch-1.0-SNAPSHOT.jar com.zero.hype.kafka.app.ByteArrayKafkaProducerApp
+
+# Terminal 3: Run the native batching producer (for comparison)
+java -cp target/kafka-pre-batch-1.0-SNAPSHOT.jar com.zero.hype.kafka.app.NativeKafkaProducerApp
+```
 
 ## Monitoring
 ![Podman Containers](assets/images/podman-containers.png "Podman Containers Screenshot")
