@@ -13,6 +13,7 @@
     <logger name="org.apache" level="INFO" />
     <logger name="com.zero.hype.kafka.util" level="INFO" />
     <logger name="com.zero.hype.kafka.app.MessageRunner" level="INFO" />
+    <logger name="com.zero.hype.kafka.util.ZeroProperties" level="INFO" />
 
     <logger name="com.zero.hype.kafka.consumer" level="INFO" />
 
